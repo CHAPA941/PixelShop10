@@ -4,13 +4,30 @@
 # 2. Запустите скрипт:
 #    python bot.py
 
+from flask import Flask
+import threading
+import os
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 3000))
+    app.run(host='0.0.0.0', port=port)
+
+# Запускаем Flask в отдельном потоке
+threading.Thread(target=run_flask, daemon=True).start()
+
 import asyncio
 import sqlite3
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import LabeledPrice, PreCheckoutQuery
 
-TOKEN = "8804500426:AAH99VEUOYVyf3CS277Kp9ZdwOdFniBtyrQ"  # <-- ЗАМЕНИТЕ НА СВОЙ ТОКЕН
+TOKEN = "8804500426:AAH99VEUOYVyf3CS277Kp9ZdwOdFniBtyrQ"  # <-- ЗАМЕНИ НА СВОЙ ТОКЕН
 ADMIN_ID = 2087257865
 
 bot = Bot(token=TOKEN)
@@ -50,10 +67,8 @@ def init_db():
     )
     """)
 
-    # Добавление админа по умолчанию
     cursor.execute("INSERT OR IGNORE INTO admins (telegram_id, username) VALUES (?, ?)", (ADMIN_ID, ""))
 
-    # Заполнение товаров MM2, если таблица пуста
     cursor.execute("SELECT COUNT(*) FROM items")
     if cursor.fetchone()[0] == 0:
         items_list = [
@@ -132,7 +147,6 @@ async def process_buy(callback: types.CallbackQuery):
 
     prices = [LabeledPrice(label=name, amount=price)]
 
-    # ИСПРАВЛЕНО: используем bot.send_invoice вместо callback.message.answer_invoice
     await bot.send_invoice(
         chat_id=callback.message.chat.id,
         title=name,
