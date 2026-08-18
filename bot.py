@@ -27,7 +27,7 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import LabeledPrice, PreCheckoutQuery
 
-TOKEN = "8804500426:AAH99VEUOYVyf3CS277Kp9ZdwOdFniBtyrQ"  # <-- ЗАМЕНИ НА СВОЙ ТОКЕН
+TOKEN = "8804500426:AAHLW6mxJZGUl4xH334xTZ-Vs6M03V1t3Ds"  # <-- ЗАМЕНИ НА СВОЙ НОВЫЙ ТОКЕН
 ADMIN_ID = 2087257865
 
 bot = Bot(token=TOKEN)
@@ -111,7 +111,7 @@ def init_db():
         ("adopt_egg_endangered", "adoptme", "egg", "Endangered Egg", "Яйцо Endangered (Legendary)", 20, 6),
         ("adopt_egg_urban", "adoptme", "egg", "Urban Egg", "Яйцо Urban (Legendary)", 20, 1),
 
-        # --- Adopt Me Boxing ---
+        # --- Adopt Me Boxing (теперь Box) ---
         ("adopt_box_rgb_reward", "adoptme", "boxing", "RGB Reward Box", "Коробка RGB Reward", 15, 4),
         ("adopt_box_2d", "adoptme", "boxing", "2D Box", "Коробка 2D", 15, 5),
         ("adopt_box_admin_abuse", "adoptme", "boxing", "Admin Abuse Box", "Коробка Admin Abuse", 15, 4),
@@ -157,7 +157,7 @@ async def show_categories(callback: types.CallbackQuery):
         categories = [
             ("pets", "🐾 Pets"),
             ("egg", "🥚 Egg"),
-            ("boxing", "📦 Box"),
+            ("boxing", "📦 Box"),   # <-- Заменено
             ("toys", "🧸 Toys"),
         ]
     else:
@@ -209,18 +209,7 @@ async def show_items(callback: types.CallbackQuery):
         "pets": "Питомцы",
         "weapons": "Оружие",
         "egg": "Яйца",
-        category_name = {
-        "pets": "Питомцы",
-        "weapons": "Оружие",
-        "egg": "Яйца",
-        "boxing": "коробки",
-        "toys": "Игрушки",
-    }.get(category, "Товары")
-
-    await callback.message.edit_text(f"Товары в категории **{category_name}**:", reply_markup=keyboard, parse_mode="Markdown")
-    await callback.answer()
-
-# Покупка товара
+        "boxing": "📦 Box",   # <-- Заменено
         "toys": "Игрушки",
     }.get(category, "Товары")
 
@@ -277,7 +266,6 @@ async def process_successful_payment(message: types.Message):
     """, (user_id, item_id, ADMIN_ID))
     order_id = cursor.lastrowid
 
-    # Уменьшаем количество товара
     cursor.execute("UPDATE items SET stock = stock - 1 WHERE id = ?", (item_id,))
 
     cursor.execute("SELECT name, price_stars FROM items WHERE id = ?", (item_id,))
@@ -371,7 +359,6 @@ async def process_reject_order(callback: types.CallbackQuery):
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
     cursor.execute("UPDATE orders SET status = 'rejected' WHERE id = ?", (order_id,))
-    # Возвращаем товар в магазин
     cursor.execute("SELECT item_id FROM orders WHERE id = ?", (order_id,))
     order = cursor.fetchone()
     if order:
