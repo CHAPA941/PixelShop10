@@ -157,7 +157,7 @@ async def show_categories(callback: types.CallbackQuery):
         categories = [
             ("pets", "🐾 Pets"),
             ("egg", "🥚 Egg"),
-            ("boxing", "🥊 Boxing"),
+            ("boxing", "📦 Box"),
             ("toys", "🧸 Toys"),
         ]
     else:
@@ -209,7 +209,18 @@ async def show_items(callback: types.CallbackQuery):
         "pets": "Питомцы",
         "weapons": "Оружие",
         "egg": "Яйца",
-        "boxing": "Боксы",
+        category_name = {
+        "pets": "Питомцы",
+        "weapons": "Оружие",
+        "egg": "Яйца",
+        "boxing": "коробки",
+        "toys": "Игрушки",
+    }.get(category, "Товары")
+
+    await callback.message.edit_text(f"Товары в категории **{category_name}**:", reply_markup=keyboard, parse_mode="Markdown")
+    await callback.answer()
+
+# Покупка товара
         "toys": "Игрушки",
     }.get(category, "Товары")
 
