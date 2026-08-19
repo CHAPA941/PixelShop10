@@ -64,9 +64,9 @@ class EditItemState(StatesGroup):
 
 class AddPromoState(StatesGroup):
     waiting_for_type = State()
-    waiting_for_item = State()          # выбор товара для item-промокода
-    waiting_for_percent = State()       # процент скидки
-    waiting_for_code = State()          # код промокода
+    waiting_for_item = State()
+    waiting_for_percent = State()
+    waiting_for_code = State()
 
 # ================== БАЗА ДАННЫХ ==================
 def init_db():
@@ -361,6 +361,11 @@ async def process_support_message(message: types.Message, state: FSMContext):
     )
     await bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown")
     await state.clear()
+
+@dp.message(Command("cancel"))
+async def cmd_cancel(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Действие отменено. Вы снова можете использовать команды.")
 
 # ================== АДМИНСКАЯ КОМАНДА ОТВЕТА ==================
 @dp.message(Command("reply"))
@@ -853,14 +858,12 @@ async def buy_now(callback: types.CallbackQuery):
 
     name, description, price = item
 
-    # Проверка активных скидок пользователя
     cursor = conn.cursor()
     cursor.execute("SELECT discount_percent FROM users WHERE telegram_id = ?", (user_id,))
     user_row = cursor.fetchone()
     discount = user_row[0] if user_row else 0
     final_price = int(price * (1 - discount / 100)) if discount > 0 else price
 
-    # Проверка промокода на товар
     cursor.execute("""
         SELECT p.discount_percent
         FROM active_promos ap
@@ -1042,7 +1045,7 @@ async def process_successful_payment(message: types.Message):
                 cursor.execute("UPDATE items SET stock = stock - 1 WHERE id = ?", (item_id,))
 
         cursor.execute("DELETE FROM cart WHERE user_id = ?", (user_id,))
-        await message.answer("Оплата прошла успешно! Заказы созданы и переданы администратору.")
+        await message.answer("Оплата прошла успешно! Заказы созданы и переданны администратору.")
         admin_text = f"📦 **Новые заказы из корзины**\nПокупатель: ID {user_id} (@{message.from_user.username or 'нет username'})\n\n"
         for i, order_id in enumerate(order_ids, 1):
             admin_text += f"Заказ #{order_id}\n"
