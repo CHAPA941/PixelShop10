@@ -73,7 +73,6 @@ def init_db():
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
 
-    # Удаляем таблицы для пересоздания (все данные будут сброшены)
     cursor.execute("DROP TABLE IF EXISTS items")
     cursor.execute("DROP TABLE IF EXISTS orders")
     cursor.execute("DROP TABLE IF EXISTS admins")
@@ -466,7 +465,7 @@ async def additem_stock_entered(message: types.Message, state: FSMContext):
     name = data.get("name")
     desc = data.get("desc")
     price = data.get("price")
-    code = f"{game}_{category}_{name.lower().replace(' ', '_')}"  # генерация кода
+    code = f"{game}_{category}_{name.lower().replace(' ', '_')}"
 
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
@@ -525,7 +524,7 @@ async def cmd_edititem(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         await message.answer("Нет доступа.")
         return
-    await message.answer("Введите ID товара (его можно увидеть в каталоге или базе):")
+    await message.answer("Введите ID товара (посмотрите через /listitems):")
     await state.set_state(EditItemState.waiting_for_item_id)
 
 @dp.message(EditItemState.waiting_for_item_id)
@@ -650,8 +649,7 @@ async def promo_type_selected(callback: types.CallbackQuery, state: FSMContext):
     if promo_type == 'percent':
         await callback.message.edit_text("Введите процент скидки (например, 50):")
         await state.set_state(AddPromoState.waiting_for_percent)
-    else:  # item
-        # Выводим список товаров для выбора
+    else:
         conn = sqlite3.connect("shop.db")
         cursor = conn.cursor()
         cursor.execute("SELECT id, name FROM items")
@@ -695,7 +693,7 @@ async def promo_code_entered(message: types.Message, state: FSMContext):
     data = await state.get_data()
     promo_type = data.get("promo_type")
     percent = data.get("percent")
-    item_id = data.get("item_id", None)  # None для percent
+    item_id = data.get("item_id", None)
 
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
@@ -736,18 +734,15 @@ async def cmd_promo(message: types.Message):
         return
     promo_id, p_type, value, discount_percent, active = promo
     if p_type == 'percent':
-        # Сохраняем скидку для следующей покупки
         cursor.execute("UPDATE users SET discount_percent = ? WHERE telegram_id = ?", (discount_percent, user_id))
         await message.answer(f"Промокод активирован! Скидка {discount_percent}% будет применена к следующему заказу.")
     elif p_type == 'item':
-        # Проверяем, что товар существует и в наличии
         cursor.execute("SELECT stock FROM items WHERE id = ?", (value,))
         stock = cursor.fetchone()
         if not stock or stock[0] <= 0:
             await message.answer("Товар недоступен.")
             conn.close()
             return
-        # Сохраняем активный промокод на товар
         cursor.execute("INSERT OR REPLACE INTO active_promos (user_id, promo_id) VALUES (?, ?)", (user_id, promo_id))
         await message.answer(f"Промокод на товар активирован! Скидка будет применена при покупке этого товара.")
     conn.commit()
@@ -859,7 +854,6 @@ async def buy_now(callback: types.CallbackQuery):
     name, description, price = item
 
     # Проверка активных скидок пользователя
-    # Процентная скидка из таблицы users
     cursor = conn.cursor()
     cursor.execute("SELECT discount_percent FROM users WHERE telegram_id = ?", (user_id,))
     user_row = cursor.fetchone()
@@ -878,9 +872,7 @@ async def buy_now(callback: types.CallbackQuery):
         promo_discount = promo_row[0]
         final_price = int(price * (1 - promo_discount / 100))
 
-    # Если итоговая цена 0, создаём заказ без оплаты
     if final_price == 0:
-        # Создаём заказ напрямую
         cursor.execute("""
             INSERT INTO orders (user_id, item_id, status, admin_id)
             VALUES (?, ?, 'pending', ?)
@@ -890,7 +882,6 @@ async def buy_now(callback: types.CallbackQuery):
         conn.commit()
         conn.close()
         await callback.message.answer("Ваш заказ бесплатный! Заказ создан и передан администратору.")
-        # Уведомляем админа
         admin_text = f"📦 **Новый заказ #{order_id}**\nТовар: {name}\nЦена: 0 ⭐ (скидка)\nПокупатель: ID {user_id}"
         await bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown")
         return
@@ -930,7 +921,7 @@ async def add_to_cart(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("remove_from_cart_"))
 async def remove_from_cart(callback: types.CallbackQuery):
-    item_id = int(callback.data.split("_")[3])   # исправленный индекс
+    item_id = int(callback.data.split("_")[3])
     user_id = callback.from_user.id
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
@@ -938,7 +929,6 @@ async def remove_from_cart(callback: types.CallbackQuery):
     conn.commit()
     conn.close()
     await callback.answer("Товар удалён из корзины.")
-    # Обновим сообщение корзины, вызвав команду /cart
     await cmd_cart(callback.message)
 
 @dp.callback_query(F.data == "checkout_cart")
@@ -959,7 +949,6 @@ async def checkout_cart(callback: types.CallbackQuery):
         await callback.answer("Корзина пуста!", show_alert=True)
         return
 
-    # Проверяем процентную скидку пользователя
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
     cursor.execute("SELECT discount_percent FROM users WHERE telegram_id = ?", (user_id,))
