@@ -542,7 +542,7 @@ async def edititem_id_entered(message: types.Message, state: FSMContext):
     await state.update_data(item_id=item_id)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Цена", callback_data="editfield_price")],
+            [InlineKeyboardButton(text="Цена", callback_data="editfield_price_stars")],  # ИСПРАВЛЕНО
             [InlineKeyboardButton(text="Количество", callback_data="editfield_stock")],
             [InlineKeyboardButton(text="Название", callback_data="editfield_name")],
             [InlineKeyboardButton(text="Описание", callback_data="editfield_description")],
@@ -568,7 +568,7 @@ async def edititem_value_entered(message: types.Message, state: FSMContext):
 
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
-    if field in ("price", "stock"):
+    if field in ("price_stars", "stock"):
         try:
             value = int(value)
         except ValueError:
