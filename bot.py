@@ -156,7 +156,7 @@ def init_db():
         ("mm2_pet_electro", "mm2", "pets", "Electro", "Питомец Electro из MM2", 15, 1),
         ("mm2_pet_firecat", "mm2", "pets", "Fire Cat", "Питомец Fire Cat из MM2", 15, 2),
         ("mm2_pet_firedog_chroma", "mm2", "pets", "Fire Dog (Chroma)", "Питомец Fire Dog (Chroma) из MM2", 15, 1),
-        ("mm2_pet_frostbird", "mm2", "pets", "Frostbird", "Питомец Frostbird из MM2", 1, 1),
+        ("mm2_pet_frostbird", "mm2", "pets", "Frostbird", "Питомец Frostbird из MM2", 15, 1),
         ("mm2_pet_icey", "mm2", "pets", "Icey", "Питомец Icey из MM2", 15, 1),
         ("mm2_pet_phoenix", "mm2", "pets", "Phoenix", "Питомец Phoenix из MM2", 15, 1),
         ("mm2_pet_sammy", "mm2", "pets", "Sammy", "Питомец Sammy из MM2", 15, 1),
@@ -846,19 +846,19 @@ async def show_item_details(callback: types.CallbackQuery):
 async def buy_now(callback: types.CallbackQuery):
     item_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
+
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
+
     cursor.execute("SELECT name, description, price_stars FROM items WHERE id = ?", (item_id,))
     item = cursor.fetchone()
-    conn.close()
-
     if not item:
+        conn.close()
         await callback.answer("Товар не найден!", show_alert=True)
         return
 
     name, description, price = item
 
-    cursor = conn.cursor()
     cursor.execute("SELECT discount_percent FROM users WHERE telegram_id = ?", (user_id,))
     user_row = cursor.fetchone()
     discount = user_row[0] if user_row else 0
@@ -900,6 +900,7 @@ async def buy_now(callback: types.CallbackQuery):
         prices=prices
     )
     await callback.answer()
+    conn.close()
 
 @dp.callback_query(F.data.startswith("add_to_cart_"))
 async def add_to_cart(callback: types.CallbackQuery):
@@ -946,18 +947,16 @@ async def checkout_cart(callback: types.CallbackQuery):
         WHERE c.user_id = ?
     """, (user_id,))
     items = cursor.fetchall()
-    conn.close()
 
     if not items:
         await callback.answer("Корзина пуста!", show_alert=True)
+        conn.close()
         return
 
-    conn = sqlite3.connect("shop.db")
-    cursor = conn.cursor()
+    # Проверяем скидку
     cursor.execute("SELECT discount_percent FROM users WHERE telegram_id = ?", (user_id,))
     user_row = cursor.fetchone()
     discount = user_row[0] if user_row else 0
-    conn.close()
 
     total = sum(price * qty for _, _, price, qty in items)
     if discount > 0:
@@ -975,6 +974,7 @@ async def checkout_cart(callback: types.CallbackQuery):
         prices=prices
     )
     await callback.answer()
+    conn.close()
 
 # ================== ОПЛАТА ==================
 @dp.pre_checkout_query()
