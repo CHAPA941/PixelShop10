@@ -156,7 +156,7 @@ def init_db():
         ("mm2_pet_electro", "mm2", "pets", "Electro", "Питомец Electro из MM2", 15, 1),
         ("mm2_pet_firecat", "mm2", "pets", "Fire Cat", "Питомец Fire Cat из MM2", 15, 2),
         ("mm2_pet_firedog_chroma", "mm2", "pets", "Fire Dog (Chroma)", "Питомец Fire Dog (Chroma) из MM2", 15, 1),
-        ("mm2_pet_frostbird", "mm2", "pets", "Frostbird", "Питомец Frostbird из MM2", 15, 1),
+        ("mm2_pet_frostbird", "mm2", "pets", "Frostbird", "Питомец Frostbird из MM2", 1, 1),
         ("mm2_pet_icey", "mm2", "pets", "Icey", "Питомец Icey из MM2", 15, 1),
         ("mm2_pet_phoenix", "mm2", "pets", "Phoenix", "Питомец Phoenix из MM2", 15, 1),
         ("mm2_pet_sammy", "mm2", "pets", "Sammy", "Питомец Sammy из MM2", 15, 1),
