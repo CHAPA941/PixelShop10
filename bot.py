@@ -49,16 +49,38 @@ class ReplyState(StatesGroup):
     waiting_for_user_id = State()
     waiting_for_reply_text = State()
 
+class AddItemState(StatesGroup):
+    waiting_for_game = State()
+    waiting_for_category = State()
+    waiting_for_name = State()
+    waiting_for_description = State()
+    waiting_for_price = State()
+    waiting_for_stock = State()
+
+class EditItemState(StatesGroup):
+    waiting_for_item_id = State()
+    waiting_for_field = State()
+    waiting_for_value = State()
+
+class AddPromoState(StatesGroup):
+    waiting_for_type = State()
+    waiting_for_item = State()          # выбор товара для item-промокода
+    waiting_for_percent = State()       # процент скидки
+    waiting_for_code = State()          # код промокода
+
 # ================== БАЗА ДАННЫХ ==================
 def init_db():
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
 
+    # Удаляем таблицы для пересоздания (все данные будут сброшены)
     cursor.execute("DROP TABLE IF EXISTS items")
     cursor.execute("DROP TABLE IF EXISTS orders")
     cursor.execute("DROP TABLE IF EXISTS admins")
     cursor.execute("DROP TABLE IF EXISTS users")
     cursor.execute("DROP TABLE IF EXISTS cart")
+    cursor.execute("DROP TABLE IF EXISTS promos")
+    cursor.execute("DROP TABLE IF EXISTS active_promos")
 
     cursor.execute("""
     CREATE TABLE items (
@@ -94,7 +116,8 @@ def init_db():
     cursor.execute("""
     CREATE TABLE users (
         telegram_id INTEGER PRIMARY KEY,
-        roblox_nick TEXT
+        roblox_nick TEXT,
+        discount_percent INTEGER DEFAULT 0
     )
     """)
 
@@ -104,6 +127,25 @@ def init_db():
         item_id INTEGER,
         quantity INTEGER DEFAULT 1,
         PRIMARY KEY (user_id, item_id)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE promos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE,
+        type TEXT,
+        value INTEGER,
+        discount_percent INTEGER,
+        active INTEGER DEFAULT 1
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE active_promos (
+        user_id INTEGER,
+        promo_id INTEGER,
+        PRIMARY KEY (user_id, promo_id)
     )
     """)
 
@@ -162,8 +204,26 @@ def init_db():
 async def cmd_start(message: types.Message):
     await message.answer(
         "Добро пожаловать в PixelShop!\n\n"
-        "Используй /catalog для просмотра товаров, /search для поиска, /cart для корзины, /profile для профиля, /support для поддержки."
+        "Используй /help для инструкции, /catalog для просмотра товаров."
     )
+
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    help_text = (
+        "📘 **Инструкция PixelShop**\n\n"
+        "**Покупка:**\n"
+        "1. Открой /catalog, выбери игру и категорию.\n"
+        "2. Нажми на товар — появится окно оплаты звёздами Telegram.\n"
+        "3. После оплаты заказ уйдёт администратору, и он свяжется с тобой для выдачи предмета в Roblox.\n\n"
+        "**Поиск:** /search <название> — быстрый поиск товара.\n"
+        "**Корзина:** /cart — просмотр и оформление выбранных товаров.\n"
+        "**Профиль:** /profile — твой ник в Roblox, история заказов, скидки.\n"
+        "**Поддержка:** /support — напиши сообщение, администратор ответит.\n"
+        "**Промокоды:** /promo <код> — активировать скидку.\n"
+        "**Связать ник:** /setnick — указать свой ник в Roblox для быстрой выдачи.\n\n"
+        "Бот в бета-версии. Если возникли проблемы — пиши в поддержку."
+    )
+    await message.answer(help_text, parse_mode="Markdown")
 
 @dp.message(Command("catalog"))
 async def cmd_catalog(message: types.Message):
@@ -232,7 +292,6 @@ async def cmd_cart(message: types.Message):
     text_lines.append(f"\n**Итого: {total}⭐**")
     await message.answer("\n".join(text_lines), parse_mode="Markdown")
 
-    # Кнопки для удаления товаров и оформления
     keyboard_builder = []
     for item_id, name, price, qty in items:
         keyboard_builder.append([
@@ -249,9 +308,10 @@ async def cmd_profile(message: types.Message):
     user_id = message.from_user.id
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT roblox_nick FROM users WHERE telegram_id = ?", (user_id,))
+    cursor.execute("SELECT roblox_nick, discount_percent FROM users WHERE telegram_id = ?", (user_id,))
     user = cursor.fetchone()
     nick = user[0] if user else "не привязан"
+    discount = user[1] if user else 0
     cursor.execute("SELECT COUNT(*) FROM orders WHERE user_id = ? AND status = 'completed'", (user_id,))
     completed_count = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM orders WHERE user_id = ? AND status IN ('pending', 'accepted')", (user_id,))
@@ -261,6 +321,7 @@ async def cmd_profile(message: types.Message):
     await message.answer(
         f"👤 **Профиль**\n\n"
         f"Ник в Roblox: {nick}\n"
+        f"Текущая скидка: {discount}%\n"
         f"Завершённых заказов: {completed_count}\n"
         f"Активных заказов: {active_count}\n\n"
         "Привязать/сменить ник: /setnick",
@@ -337,7 +398,362 @@ async def process_reply_text(message: types.Message, state: FSMContext):
         await message.answer(f"Не удалось отправить ответ: {e}")
     await state.clear()
 
-# ================== CALLBACK-ОБРАБОТЧИКИ ==================
+# ================== АДМИНСКИЕ КОМАНДЫ ДЛЯ ТОВАРОВ ==================
+@dp.message(Command("additem"))
+async def cmd_additem(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("Нет доступа.")
+        return
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="MM2", callback_data="additem_game_mm2")],
+            [InlineKeyboardButton(text="Adopt Me", callback_data="additem_game_adoptme")],
+        ]
+    )
+    await message.answer("Выберите игру:", reply_markup=keyboard)
+    await state.set_state(AddItemState.waiting_for_game)
+
+@dp.callback_query(F.data.startswith("additem_game_"))
+async def additem_game_selected(callback: types.CallbackQuery, state: FSMContext):
+    game = callback.data.split("_")[2]
+    await state.update_data(game=game)
+    await callback.message.edit_text("Введите категорию (pets, weapons, egg, boxing, toys):")
+    await state.set_state(AddItemState.waiting_for_category)
+    await callback.answer()
+
+@dp.message(AddItemState.waiting_for_category)
+async def additem_category_entered(message: types.Message, state: FSMContext):
+    category = message.text.strip()
+    await state.update_data(category=category)
+    await message.answer("Введите название товара:")
+    await state.set_state(AddItemState.waiting_for_name)
+
+@dp.message(AddItemState.waiting_for_name)
+async def additem_name_entered(message: types.Message, state: FSMContext):
+    name = message.text.strip()
+    await state.update_data(name=name)
+    await message.answer("Введите описание товара:")
+    await state.set_state(AddItemState.waiting_for_description)
+
+@dp.message(AddItemState.waiting_for_description)
+async def additem_desc_entered(message: types.Message, state: FSMContext):
+    desc = message.text.strip()
+    await state.update_data(desc=desc)
+    await message.answer("Введите цену в звёздах (число):")
+    await state.set_state(AddItemState.waiting_for_price)
+
+@dp.message(AddItemState.waiting_for_price)
+async def additem_price_entered(message: types.Message, state: FSMContext):
+    try:
+        price = int(message.text.strip())
+    except ValueError:
+        await message.answer("Цена должна быть целым числом. Попробуйте ещё раз.")
+        return
+    await state.update_data(price=price)
+    await message.answer("Введите количество (stock):")
+    await state.set_state(AddItemState.waiting_for_stock)
+
+@dp.message(AddItemState.waiting_for_stock)
+async def additem_stock_entered(message: types.Message, state: FSMContext):
+    try:
+        stock = int(message.text.strip())
+    except ValueError:
+        await message.answer("Количество должно быть целым числом. Попробуйте ещё раз.")
+        return
+    data = await state.get_data()
+    game = data.get("game")
+    category = data.get("category")
+    name = data.get("name")
+    desc = data.get("desc")
+    price = data.get("price")
+    code = f"{game}_{category}_{name.lower().replace(' ', '_')}"  # генерация кода
+
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO items (code, game, category, name, description, price_stars, stock)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (code, game, category, name, desc, price, stock))
+        conn.commit()
+        await message.answer(f"Товар **{name}** успешно добавлен!")
+    except Exception as e:
+        await message.answer(f"Ошибка при добавлении: {e}")
+    finally:
+        conn.close()
+    await state.clear()
+
+@dp.message(Command("removeitem"))
+async def cmd_removeitem(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("Нет доступа.")
+        return
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM items")
+    items = cursor.fetchall()
+    conn.close()
+
+    if not items:
+        await message.answer("Нет товаров.")
+        return
+
+    keyboard_builder = []
+    for item_id, name in items:
+        keyboard_builder.append([
+            InlineKeyboardButton(text=f"❌ {name}", callback_data=f"removeitem_{item_id}")
+        ])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_builder)
+    await message.answer("Выберите товар для удаления:", reply_markup=keyboard)
+
+@dp.callback_query(F.data.startswith("removeitem_"))
+async def removeitem_callback(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет доступа.")
+        return
+    item_id = int(callback.data.split("_")[1])
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM items WHERE id = ?", (item_id,))
+    conn.commit()
+    conn.close()
+    await callback.message.edit_text("Товар удалён.")
+    await callback.answer()
+
+@dp.message(Command("edititem"))
+async def cmd_edititem(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("Нет доступа.")
+        return
+    await message.answer("Введите ID товара (его можно увидеть в каталоге или базе):")
+    await state.set_state(EditItemState.waiting_for_item_id)
+
+@dp.message(EditItemState.waiting_for_item_id)
+async def edititem_id_entered(message: types.Message, state: FSMContext):
+    try:
+        item_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("ID должен быть числом.")
+        return
+    await state.update_data(item_id=item_id)
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Цена", callback_data="editfield_price")],
+            [InlineKeyboardButton(text="Количество", callback_data="editfield_stock")],
+            [InlineKeyboardButton(text="Название", callback_data="editfield_name")],
+            [InlineKeyboardButton(text="Описание", callback_data="editfield_description")],
+        ]
+    )
+    await message.answer("Что вы хотите изменить?", reply_markup=keyboard)
+    await state.set_state(EditItemState.waiting_for_field)
+
+@dp.callback_query(F.data.startswith("editfield_"))
+async def edititem_field_selected(callback: types.CallbackQuery, state: FSMContext):
+    field = callback.data.split("_")[1]
+    await state.update_data(field=field)
+    await callback.message.edit_text(f"Введите новое значение для {field}:")
+    await state.set_state(EditItemState.waiting_for_value)
+    await callback.answer()
+
+@dp.message(EditItemState.waiting_for_value)
+async def edititem_value_entered(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    item_id = data.get("item_id")
+    field = data.get("field")
+    value = message.text.strip()
+
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    if field in ("price", "stock"):
+        try:
+            value = int(value)
+        except ValueError:
+            await message.answer("Значение должно быть числом.")
+            conn.close()
+            return
+        cursor.execute(f"UPDATE items SET {field} = ? WHERE id = ?", (value, item_id))
+    else:
+        cursor.execute(f"UPDATE items SET {field} = ? WHERE id = ?", (value, item_id))
+    conn.commit()
+    conn.close()
+    await message.answer("✅ Изменения сохранены.")
+    await state.clear()
+
+@dp.message(Command("listitems"))
+async def cmd_listitems(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("Нет доступа.")
+        return
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, price_stars, stock FROM items")
+    items = cursor.fetchall()
+    conn.close()
+    if not items:
+        await message.answer("Нет товаров.")
+        return
+    text_lines = ["📋 **Список товаров:**\n"]
+    for item_id, name, price, stock in items:
+        text_lines.append(f"ID: {item_id} | {name} | {price}⭐ | stock: {stock}")
+    await message.answer("\n".join(text_lines), parse_mode="Markdown")
+
+# ================== ПРОМОКОДЫ И СКИДКИ ==================
+@dp.message(Command("discounts"))
+async def cmd_discounts(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("Нет доступа.")
+        return
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, code, type, value, discount_percent, active FROM promos")
+    promos = cursor.fetchall()
+    conn.close()
+    if not promos:
+        await message.answer("Скидок пока нет.")
+        return
+    text_lines = ["🎁 **Активные скидки:**\n"]
+    for promo in promos:
+        promo_id, code, p_type, value, discount_percent, active = promo
+        if p_type == 'percent':
+            desc = f"Процентная скидка: {discount_percent}%"
+        else:
+            conn = sqlite3.connect("shop.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM items WHERE id = ?", (value,))
+            item = cursor.fetchone()
+            conn.close()
+            item_name = item[0] if item else "Неизвестный товар"
+            if discount_percent == 0:
+                desc = f"Товар бесплатно: {item_name}"
+            else:
+                desc = f"Скидка на товар {item_name}: {discount_percent}%"
+        status = "✅ активен" if active else "❌ выключен"
+        text_lines.append(f"`{code}` — {desc} ({status})")
+    await message.answer("\n".join(text_lines), parse_mode="Markdown")
+
+@dp.message(Command("addpromo"))
+async def cmd_addpromo(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("Нет доступа.")
+        return
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Процентная скидка", callback_data="promo_type_percent")],
+        [InlineKeyboardButton(text="На конкретный товар", callback_data="promo_type_item")],
+    ])
+    await message.answer("Выберите тип скидки:", reply_markup=keyboard)
+    await state.set_state(AddPromoState.waiting_for_type)
+
+@dp.callback_query(F.data.startswith("promo_type_"))
+async def promo_type_selected(callback: types.CallbackQuery, state: FSMContext):
+    promo_type = callback.data.split("_")[2]
+    await state.update_data(promo_type=promo_type)
+    if promo_type == 'percent':
+        await callback.message.edit_text("Введите процент скидки (например, 50):")
+        await state.set_state(AddPromoState.waiting_for_percent)
+    else:  # item
+        # Выводим список товаров для выбора
+        conn = sqlite3.connect("shop.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name FROM items")
+        items = cursor.fetchall()
+        conn.close()
+        keyboard_builder = []
+        for item_id, name in items:
+            keyboard_builder.append([
+                InlineKeyboardButton(text=f"{name} (ID {item_id})", callback_data=f"promo_item_{item_id}")
+            ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_builder)
+        await callback.message.edit_text("Выберите товар:", reply_markup=keyboard)
+        await state.set_state(AddPromoState.waiting_for_item)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("promo_item_"))
+async def promo_item_selected(callback: types.CallbackQuery, state: FSMContext):
+    item_id = int(callback.data.split("_")[2])
+    await state.update_data(item_id=item_id)
+    await callback.message.edit_text("Введите процент скидки на этот товар (0 = бесплатно):")
+    await state.set_state(AddPromoState.waiting_for_percent)
+    await callback.answer()
+
+@dp.message(AddPromoState.waiting_for_percent)
+async def promo_percent_entered(message: types.Message, state: FSMContext):
+    try:
+        percent = int(message.text.strip())
+        if percent < 0 or percent > 100:
+            await message.answer("Процент должен быть от 0 до 100.")
+            return
+    except ValueError:
+        await message.answer("Введите целое число.")
+        return
+    await state.update_data(percent=percent)
+    await message.answer("Введите код промокода (например, SALE50):")
+    await state.set_state(AddPromoState.waiting_for_code)
+
+@dp.message(AddPromoState.waiting_for_code)
+async def promo_code_entered(message: types.Message, state: FSMContext):
+    code = message.text.strip()
+    data = await state.get_data()
+    promo_type = data.get("promo_type")
+    percent = data.get("percent")
+    item_id = data.get("item_id", None)  # None для percent
+
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    try:
+        if promo_type == 'percent':
+            cursor.execute("""
+                INSERT INTO promos (code, type, value, discount_percent, active)
+                VALUES (?, ?, ?, ?, 1)
+            """, (code, 'percent', 0, percent))
+        else:
+            cursor.execute("""
+                INSERT INTO promos (code, type, value, discount_percent, active)
+                VALUES (?, ?, ?, ?, 1)
+            """, (code, 'item', item_id, percent))
+        conn.commit()
+        await message.answer(f"Промокод `{code}` создан!")
+    except Exception as e:
+        await message.answer(f"Ошибка: {e}")
+    finally:
+        conn.close()
+    await state.clear()
+
+@dp.message(Command("promo"))
+async def cmd_promo(message: types.Message):
+    args = message.text.split()
+    if len(args) != 2:
+        await message.answer("Используйте: /promo <код>")
+        return
+    code = args[1]
+    user_id = message.from_user.id
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, type, value, discount_percent, active FROM promos WHERE code = ?", (code,))
+    promo = cursor.fetchone()
+    if not promo or promo[4] != 1:
+        await message.answer("Промокод не найден или неактивен.")
+        conn.close()
+        return
+    promo_id, p_type, value, discount_percent, active = promo
+    if p_type == 'percent':
+        # Сохраняем скидку для следующей покупки
+        cursor.execute("UPDATE users SET discount_percent = ? WHERE telegram_id = ?", (discount_percent, user_id))
+        await message.answer(f"Промокод активирован! Скидка {discount_percent}% будет применена к следующему заказу.")
+    elif p_type == 'item':
+        # Проверяем, что товар существует и в наличии
+        cursor.execute("SELECT stock FROM items WHERE id = ?", (value,))
+        stock = cursor.fetchone()
+        if not stock or stock[0] <= 0:
+            await message.answer("Товар недоступен.")
+            conn.close()
+            return
+        # Сохраняем активный промокод на товар
+        cursor.execute("INSERT OR REPLACE INTO active_promos (user_id, promo_id) VALUES (?, ?)", (user_id, promo_id))
+        await message.answer(f"Промокод на товар активирован! Скидка будет применена при покупке этого товара.")
+    conn.commit()
+    conn.close()
+
+# ================== CALLBACK-ОБРАБОТЧИКИ КАТАЛОГА ==================
 @dp.callback_query(F.data.startswith("game_"))
 async def show_categories(callback: types.CallbackQuery):
     game = callback.data.split("_")[1]
@@ -429,6 +845,7 @@ async def show_item_details(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("buy_now_"))
 async def buy_now(callback: types.CallbackQuery):
     item_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
     cursor.execute("SELECT name, description, price_stars FROM items WHERE id = ?", (item_id,))
@@ -440,7 +857,45 @@ async def buy_now(callback: types.CallbackQuery):
         return
 
     name, description, price = item
-    prices = [LabeledPrice(label=name, amount=price)]
+
+    # Проверка активных скидок пользователя
+    # Процентная скидка из таблицы users
+    cursor = conn.cursor()
+    cursor.execute("SELECT discount_percent FROM users WHERE telegram_id = ?", (user_id,))
+    user_row = cursor.fetchone()
+    discount = user_row[0] if user_row else 0
+    final_price = int(price * (1 - discount / 100)) if discount > 0 else price
+
+    # Проверка промокода на товар
+    cursor.execute("""
+        SELECT p.discount_percent
+        FROM active_promos ap
+        JOIN promos p ON ap.promo_id = p.id
+        WHERE ap.user_id = ? AND p.type = 'item' AND p.value = ? AND p.active = 1
+    """, (user_id, item_id))
+    promo_row = cursor.fetchone()
+    if promo_row:
+        promo_discount = promo_row[0]
+        final_price = int(price * (1 - promo_discount / 100))
+
+    # Если итоговая цена 0, создаём заказ без оплаты
+    if final_price == 0:
+        # Создаём заказ напрямую
+        cursor.execute("""
+            INSERT INTO orders (user_id, item_id, status, admin_id)
+            VALUES (?, ?, 'pending', ?)
+        """, (user_id, item_id, ADMIN_ID))
+        order_id = cursor.lastrowid
+        cursor.execute("UPDATE items SET stock = stock - 1 WHERE id = ?", (item_id,))
+        conn.commit()
+        conn.close()
+        await callback.message.answer("Ваш заказ бесплатный! Заказ создан и передан администратору.")
+        # Уведомляем админа
+        admin_text = f"📦 **Новый заказ #{order_id}**\nТовар: {name}\nЦена: 0 ⭐ (скидка)\nПокупатель: ID {user_id}"
+        await bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown")
+        return
+
+    prices = [LabeledPrice(label=name, amount=final_price)]
     await bot.send_invoice(
         chat_id=callback.message.chat.id,
         title=name,
@@ -475,7 +930,7 @@ async def add_to_cart(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("remove_from_cart_"))
 async def remove_from_cart(callback: types.CallbackQuery):
-    item_id = int(callback.data.split("_")[4])
+    item_id = int(callback.data.split("_")[3])   # исправленный индекс
     user_id = callback.from_user.id
     conn = sqlite3.connect("shop.db")
     cursor = conn.cursor()
@@ -483,6 +938,7 @@ async def remove_from_cart(callback: types.CallbackQuery):
     conn.commit()
     conn.close()
     await callback.answer("Товар удалён из корзины.")
+    # Обновим сообщение корзины, вызвав команду /cart
     await cmd_cart(callback.message)
 
 @dp.callback_query(F.data == "checkout_cart")
@@ -503,7 +959,18 @@ async def checkout_cart(callback: types.CallbackQuery):
         await callback.answer("Корзина пуста!", show_alert=True)
         return
 
+    # Проверяем процентную скидку пользователя
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT discount_percent FROM users WHERE telegram_id = ?", (user_id,))
+    user_row = cursor.fetchone()
+    discount = user_row[0] if user_row else 0
+    conn.close()
+
     total = sum(price * qty for _, _, price, qty in items)
+    if discount > 0:
+        total = int(total * (1 - discount / 100))
+
     description = "Оформление заказа из корзины"
     prices = [LabeledPrice(label="Общая сумма", amount=total)]
     await bot.send_invoice(
@@ -587,7 +1054,6 @@ async def process_successful_payment(message: types.Message):
 
         cursor.execute("DELETE FROM cart WHERE user_id = ?", (user_id,))
         await message.answer("Оплата прошла успешно! Заказы созданы и переданы администратору.")
-        # Уведомляем админа о всех заказах
         admin_text = f"📦 **Новые заказы из корзины**\nПокупатель: ID {user_id} (@{message.from_user.username or 'нет username'})\n\n"
         for i, order_id in enumerate(order_ids, 1):
             admin_text += f"Заказ #{order_id}\n"
